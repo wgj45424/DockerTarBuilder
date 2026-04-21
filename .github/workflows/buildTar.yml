@@ -1,0 +1,87 @@
+name: Build-Docker-Images-From-Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      git_repo_url:
+        description: 'Git仓库地址 (例如: https://github.com/swiss-ai/mmore.git)'
+        required: true
+        default: 'https://github.com/swiss-ai/mmore.git'
+      git_ref:
+        description: 'Git引用 (分支/tag/commit，例如: main, v1.2.2)'
+        required: false
+        default: 'main'
+      dockerfile_path:
+        description: 'Dockerfile路径 (相对于仓库根目录，例如: docker/ubuntu/Dockerfile.cpu)'
+        required: true
+        default: 'docker/ubuntu/Dockerfile.cpu'
+      image_tag:
+        description: '输出的镜像标签 (例如: mmore:edge-cpu)'
+        required: true
+        default: 'mmore:edge-cpu'
+      build_context:
+        description: 'Docker构建上下文 (例如: . 或 docker/ubuntu)'
+        required: false
+        default: '.'
+
+jobs:
+  build_and_package:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 用于创建 Release 和上传附件
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone source repository
+        run: |
+          git clone --depth 1 --branch ${{ github.event.inputs.git_ref }} \
+            ${{ github.event.inputs.git_repo_url }} source_repo
+          cd source_repo
+          echo "Current commit: $(git rev-parse HEAD)"
+          ls -la
+
+      - name: Build Docker image from source
+        run: |
+          cd source_repo
+          docker build \
+            -t ${{ github.event.inputs.image_tag }} \
+            -f ${{ github.event.inputs.dockerfile_path }} \
+            ${{ github.event.inputs.build_context }}
+
+      - name: Save Docker image to tar.gz
+        run: |
+          image_name="${{ github.event.inputs.image_tag }}"
+          # 将镜像标签中的 / 和 : 替换为 _ 用于文件名
+          safe_name="${image_name//\//_}"
+          safe_name="${safe_name//:/_}"
+          docker save "${image_name}" -o "${safe_name}.tar"
+          gzip -c "${safe_name}.tar" > "${safe_name}.tar.gz"
+          rm "${safe_name}.tar"
+          echo "IMAGE_FILE=${safe_name}.tar.gz" >> $GITHUB_ENV
+
+      - name: List generated files
+        run: |
+          echo "Generated files:"
+          ls -la *.tar.gz
+          release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
+          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: DockerImageBuilder-${{ github.run_number }}
+          name: ${{ env.RELEASE_NAME }} - ${{ github.event.inputs.image_tag }}
+          body: |
+            ### 构建参数
+            - **源码仓库**: ${{ github.event.inputs.git_repo_url }}
+            - **Git引用**: ${{ github.event.inputs.git_ref }}
+            - **Dockerfile路径**: ${{ github.event.inputs.dockerfile_path }}
+            - **镜像标签**: ${{ github.event.inputs.image_tag }}
+            
+            ### 使用方法
+            ```bash
+            # 下载后解压并加载镜像
+            gunzip -c 文件名.tar.gz | docker load
+            # 或直接
+            docker load -i 文件名.tar.gz
