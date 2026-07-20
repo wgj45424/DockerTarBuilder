@@ -1,4 +1,4 @@
-name: Get-AMD64-2gzip
+name: Get-AMD64-2zip
 
 on:
   workflow_dispatch:
@@ -68,17 +68,39 @@ jobs:
           find $GITHUB_WORKSPACE -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.part-*" \) -exec ls -lh {} \;
           echo "=========================================="
           
-          # 统计总大小
-          total_size=$(du -sh $GITHUB_WORKSPACE/*.tar.gz $GITHUB_WORKSPACE/*.part-* 2>/dev/null | awk '{sum+=$1} END {print sum}' || echo "0")
-          echo "📊 总大小: $(du -sh $GITHUB_WORKSPACE/*.tar.gz $GITHUB_WORKSPACE/*.part-* 2>/dev/null | tail -1 | cut -f1 || echo 'N/A')"
-          
           release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      # ✅ 新增：彻底清理旧的 Release 和 Tag，确保全新发布
+      - name: Clean up existing release and tag
+        run: |
+          echo "🧹 开始清理已存在的 Release 和 Tag..."
+          
+          # 删除已存在的 Release（如果存在）
+          if gh release view 1.0.0 --repo ${{ github.repository }} &>/dev/null; then
+            echo "发现已存在的 Release，正在删除..."
+            gh release delete 1.0.0 --repo ${{ github.repository }} --yes
+            echo "✅ Release 已删除"
+          else
+            echo "Release 不存在，无需删除"
+          fi
+          
+          # 删除已存在的本地 Tag 并推送到远程
+          if git rev-parse 1.0.0 &>/dev/null; then
+            echo "发现已存在的本地 Tag，正在删除..."
+            git tag -d 1.0.0
+            git push --delete origin 1.0.0 || echo "远程 Tag 不存在或已删除"
+            echo "✅ Tag 已删除"
+          else
+            echo "本地 Tag 不存在，无需删除"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
-          tag_name: 1.0.0  # ✅ 修改为 1.0.0
+          tag_name: 1.0.0
           name: ${{ env.RELEASE_NAME }} for x86-64
           body: |
             [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
