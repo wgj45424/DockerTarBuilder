@@ -1,0 +1,97 @@
+name: kimiamd64
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '请填写docker镜像名称,多个用英文逗号分开'
+        required: true
+        default: 'alpine:latest,alpine/curl,busybox:stable-glibc'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull Docker Images and Package
+        run: |
+          images="${{ github.event.inputs.docker_images }}"
+          IFS=',' read -r -a image_array <<< "$images"
+          for image in "${image_array[@]}"; do
+            docker pull "${image}" --platform "linux/amd64"
+            image_name="${image//\//_}"
+            image_name="${image_name//:/_}"
+            docker save "${image}" -o "${image_name}-amd64.tar"
+            
+            # 检查 tar 文件大小，大于 2GB (2147483648 bytes) 则分片
+            file_size=$(stat -c%s "${image_name}-amd64.tar")
+            if [ "$file_size" -gt 2147483648 ]; then
+              echo "镜像 ${image} 大于 2GB，进行分片压缩..."
+              # 先 gzip 压缩
+              gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
+              rm "${image_name}-amd64.tar"
+              # 分片为 2GB 一个文件
+              split -b 2G "${image_name}-amd64.tar.gz" "${image_name}-amd64.tar.gz.part-"
+              rm "${image_name}-amd64.tar.gz"
+              # 生成合并脚本
+              cat > "${image_name}-amd64.merge.sh" << 'EOF'
+          #!/bin/bash
+          # 合并分片文件并解压
+          # 用法: bash xxx.merge.sh
+          image_name="${0%.merge.sh}"
+          cat "${image_name}.tar.gz.part-"* > "${image_name}.tar.gz"
+          gunzip -c "${image_name}.tar.gz" > "${image_name}.tar"
+          docker load -i "${image_name}.tar"
+          echo "镜像加载完成: ${image_name}"
+          EOF
+              chmod +x "${image_name}-amd64.merge.sh"
+            else
+              echo "镜像 ${image} 小于 2GB，直接压缩..."
+              gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
+              rm "${image_name}-amd64.tar"
+            fi
+          done
+
+      - name: List generated files (debug step)
+        run: |
+          echo "Preparing docker images list files:"
+          find $GITHUB_WORKSPACE -type f \( -name "*.tar.gz" -o -name "*.tar.gz.part-*" -o -name "*.merge.sh" \) | sort
+          release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
+          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@master
+        with:
+          tag_name: DockerTarBuilder-AMD64
+          name: ${{ env.RELEASE_NAME }} for x86-64
+          body: |
+            [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            ### How to use? For example
+            **普通镜像（小于2GB）:**
+            `docker load -i alpine_latest.tar.gz`
+            
+            **大镜像（大于2GB，分片上传）:**
+            1. 下载该镜像的所有 `.part-xx` 分片文件和对应的 `.merge.sh` 脚本
+            2. 运行合并脚本: `bash xxx-amd64.merge.sh`
+            3. 脚本会自动合并分片、解压并加载镜像
+            
+            ### Video teaching
+            [![Bilibili](https://img.shields.io/badge/Bilibili-123456?logo=bilibili&logoColor=fff&labelColor=fb7299)](https://www.bilibili.com/video/BV1yyq6YREdF)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Docker images as release assets
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: DockerTarBuilder-AMD64
+          files: |
+            ${{ github.workspace }}/*.tar.gz
+            ${{ github.workspace }}/*.tar.gz.part-*
+            ${{ github.workspace }}/*.merge.sh
+          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
