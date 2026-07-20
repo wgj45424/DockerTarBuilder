@@ -1,4 +1,4 @@
-name: kimiamd64
+name: Get-AMD64-Docker-Images-Release
 
 on:
   workflow_dispatch:
@@ -25,15 +25,16 @@ jobs:
             image_name="${image_name//:/_}"
             docker save "${image}" -o "${image_name}-amd64.tar"
             
-            # 检查 tar 文件大小，大于 2GB (2147483648 bytes) 则分片
+            # 检查 tar 文件大小，大于 1.9GB (2030043136 bytes) 则分片
+            # GitHub Release 单文件限制 2GB，留点余量用 1.9GB
             file_size=$(stat -c%s "${image_name}-amd64.tar")
-            if [ "$file_size" -gt 2147483648 ]; then
-              echo "镜像 ${image} 大于 2GB，进行分片压缩..."
+            if [ "$file_size" -gt 2030043136 ]; then
+              echo "镜像 ${image} 大于 1.9GB，进行分片压缩..."
               # 先 gzip 压缩
               gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
               rm "${image_name}-amd64.tar"
-              # 分片为 2GB 一个文件
-              split -b 2G "${image_name}-amd64.tar.gz" "${image_name}-amd64.tar.gz.part-"
+              # 分片为 1.9GB 一个文件 (2030043136 bytes)
+              split -b 2030043136 "${image_name}-amd64.tar.gz" "${image_name}-amd64.tar.gz.part-"
               rm "${image_name}-amd64.tar.gz"
               # 生成合并脚本
               cat > "${image_name}-amd64.merge.sh" << 'EOF'
@@ -48,7 +49,7 @@ jobs:
           EOF
               chmod +x "${image_name}-amd64.merge.sh"
             else
-              echo "镜像 ${image} 小于 2GB，直接压缩..."
+              echo "镜像 ${image} 小于 1.9GB，直接压缩..."
               gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
               rm "${image_name}-amd64.tar"
             fi
@@ -69,10 +70,10 @@ jobs:
           body: |
             [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
             ### How to use? For example
-            **普通镜像（小于2GB）:**
+            **普通镜像（小于1.9GB）:**
             `docker load -i alpine_latest.tar.gz`
             
-            **大镜像（大于2GB，分片上传）:**
+            **大镜像（大于1.9GB，分片上传）:**
             1. 下载该镜像的所有 `.part-xx` 分片文件和对应的 `.merge.sh` 脚本
             2. 运行合并脚本: `bash xxx-amd64.merge.sh`
             3. 脚本会自动合并分片、解压并加载镜像
