@@ -1,4 +1,4 @@
-name: Get-AMD64-zip-2g
+name: Get-AMD64-2gzip
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
   pull_and_package:
     runs-on: ubuntu-22.04
     permissions:
-      contents: write  # 创建 Release 需要写入权限
+      contents: write  # 创建 Release 和上传附件需要写入权限
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -50,17 +50,13 @@ jobs:
               # 删除原始大文件
               rm "${image_name}-amd64.tar"
               
-              # 记录分片信息，供后续 Release body 使用
-              echo "SPLIT_${image_name}=true" >> $GITHUB_ENV
-              echo "✅ 分片完成，共生成 $(ls ${image_name}-amd64.tar.part-* | wc -l) 个分片文件"
+              echo "✅ 分片完成，共生成 $(ls ${image_name}-amd64.tar.part-* 2>/dev/null | wc -l) 个分片文件"
             else
               echo "✅ 文件 ${image_name}-amd64.tar 大小为 $(du -h ${image_name}-amd64.tar | cut -f1)，小于2GB，直接压缩..."
               
               # 小于2GB，正常压缩
               gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
               rm "${image_name}-amd64.tar"
-              
-              echo "SPLIT_${image_name}=false" >> $GITHUB_ENV
             fi
           done
 
@@ -82,7 +78,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
-          tag_name: DockerTarBuilder-AMD64
+          tag_name: 1.0.0  # ✅ 修改为 1.0.0
           name: ${{ env.RELEASE_NAME }} for x86-64
           body: |
             [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
