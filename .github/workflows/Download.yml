@@ -1,4 +1,4 @@
-name: Download and Commit Docker Images
+name: Download and Commit with Git LFS
 on:
   workflow_dispatch:
     inputs:
@@ -19,13 +19,24 @@ jobs:
     runs-on: ubuntu-22.04
     
     permissions:
-      contents: write  # 需要写入权限才能 push
+      contents: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # 获取完整历史，方便 commit
+        fetch-depth: 0
+
+    - name: Install and configure Git LFS
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git-lfs
+        git lfs install
+        
+        # 追踪所有 .tar.gz 文件
+        git lfs track "*.tar.gz"
+        git add .gitattributes
+        git commit -m "Configure Git LFS for .tar.gz files" || echo "No changes"
 
     - name: Download artifact
       uses: actions/download-artifact@v4
@@ -35,25 +46,16 @@ jobs:
         run-id: ${{ github.event.inputs.run_id }}
         github-token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: List downloaded files
+    - name: Commit and push with Git LFS
       run: |
-        echo "=== Downloaded files ==="
-        ls -lh ${{ github.event.inputs.target_dir }}/ || echo "No files found"
-
-    - name: Commit and push to repository
-      run: |
-        # 配置 git 用户信息
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # 添加文件到暂存区
         git add ${{ github.event.inputs.target_dir }}/*.tar.gz
         
-        # 检查是否有变更需要提交
         if git diff --staged --quiet; then
           echo "No changes to commit"
         else
-          # 获取当前时间作为提交信息
           TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
           git commit -m "Add Docker images from run ${{ github.event.inputs.run_id }} [skip ci]"
           git push
