@@ -12,11 +12,12 @@ jobs:
   pull_and_package:
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: write  # 给上传 Release 的权限
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 1. 拉取镜像、打包、分片
       - name: Pull Docker Images and Package
         run: |
           images="${{ github.event.inputs.docker_images }}"
@@ -33,7 +34,7 @@ jobs:
             docker save "${image}" -o "${image_name}-amd64.tar"
             
             file_size=$(stat -c%s "${image_name}-amd64.tar")
-            max_size=2147483648
+            max_size=2147483648  # 2GB
             
             if (( file_size > max_size )); then
               echo "⚠️ 文件超过2GB，开始分片..."
@@ -48,6 +49,7 @@ jobs:
             fi
           done
 
+      # 2. 列出生成的文件，用于调试
       - name: List generated files
         run: |
           echo "=========================================="
@@ -58,6 +60,7 @@ jobs:
           release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
 
+      # 3. 清理旧的 Release 和 Tag（确保能重新创建）
       - name: Clean up existing release and tag
         run: |
           echo "🧹 开始清理已存在的 Release 和 Tag..."
@@ -81,6 +84,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 4. 创建 Release（但不上传文件）
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2.1.0
         with:
