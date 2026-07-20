@@ -1,4 +1,4 @@
-name: Get-AMD64-2zip
+name: Get-AMD64-2gzip
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
   pull_and_package:
     runs-on: ubuntu-22.04
     permissions:
-      contents: write  # 创建 Release 和上传附件需要写入权限
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,7 +22,6 @@ jobs:
           images="${{ github.event.inputs.docker_images }}"
           IFS=',' read -r -a image_array <<< "$images"
           for image in "${image_array[@]}"; do
-            # 去除可能的空格
             image=$(echo "$image" | xargs)
             echo "Processing: $image"
             
@@ -31,30 +30,19 @@ jobs:
             image_name="${image//\//_}"
             image_name="${image_name//:/_}"
             
-            # 先保存为 .tar（不压缩），便于后续检查大小和分片
             docker save "${image}" -o "${image_name}-amd64.tar"
             
-            # 检查文件大小并决定是否分片
             file_size=$(stat -c%s "${image_name}-amd64.tar")
-            max_size=2147483648  # 2 GiB - 1 byte
+            max_size=2147483648
             
             if (( file_size > max_size )); then
-              echo "⚠️ 文件 ${image_name}-amd64.tar 大小为 $(du -h ${image_name}-amd64.tar | cut -f1)，超过2GB，开始分片..."
-              
-              # 分片大小设置为 1900MB（留出余量）
+              echo "⚠️ 文件超过2GB，开始分片..."
               CHUNK_SIZE=1900M
-              
-              # 分割文件，生成 .part-000, .part-001, ...
               split -b ${CHUNK_SIZE} -a 3 -d "${image_name}-amd64.tar" "${image_name}-amd64.tar.part-"
-              
-              # 删除原始大文件
               rm "${image_name}-amd64.tar"
-              
-              echo "✅ 分片完成，共生成 $(ls ${image_name}-amd64.tar.part-* 2>/dev/null | wc -l) 个分片文件"
+              echo "✅ 分片完成"
             else
-              echo "✅ 文件 ${image_name}-amd64.tar 大小为 $(du -h ${image_name}-amd64.tar | cut -f1)，小于2GB，直接压缩..."
-              
-              # 小于2GB，正常压缩
+              echo "✅ 文件小于2GB，直接压缩..."
               gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
               rm "${image_name}-amd64.tar"
             fi
@@ -66,17 +54,14 @@ jobs:
           echo "📦 生成的文件列表："
           echo "=========================================="
           find $GITHUB_WORKSPACE -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.part-*" \) -exec ls -lh {} \;
-          echo "=========================================="
           
           release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
           echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
 
-      # ✅ 新增：彻底清理旧的 Release 和 Tag，确保全新发布
       - name: Clean up existing release and tag
         run: |
           echo "🧹 开始清理已存在的 Release 和 Tag..."
           
-          # 删除已存在的 Release（如果存在）
           if gh release view 1.0.0 --repo ${{ github.repository }} &>/dev/null; then
             echo "发现已存在的 Release，正在删除..."
             gh release delete 1.0.0 --repo ${{ github.repository }} --yes
@@ -85,7 +70,6 @@ jobs:
             echo "Release 不存在，无需删除"
           fi
           
-          # 删除已存在的本地 Tag 并推送到远程
           if git rev-parse 1.0.0 &>/dev/null; then
             echo "发现已存在的本地 Tag，正在删除..."
             git tag -d 1.0.0
