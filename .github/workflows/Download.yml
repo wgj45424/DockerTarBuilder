@@ -1,0 +1,52 @@
+name: Download Docker Images Artifact
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: '要下载的 Workflow Run ID（留空则下载最新的）'
+        required: false
+        default: ''
+      download_path:
+        description: '下载存放路径（相对于工作空间）'
+        required: false
+        default: './downloaded-images'
+
+jobs:
+  download_artifact:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Download artifact by run_id
+      if: github.event.inputs.run_id != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-images
+        path: ${{ github.event.inputs.download_path }}
+        run-id: ${{ github.event.inputs.run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download latest artifact
+      if: github.event.inputs.run_id == ''
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-images
+        path: ${{ github.event.inputs.download_path }}
+
+    - name: List downloaded files
+      run: |
+        echo "=== Downloaded files ==="
+        ls -lh ${{ github.event.inputs.download_path }}
+        echo ""
+        echo "=== File list with sizes ==="
+        find ${{ github.event.inputs.download_path }} -type f -name "*.tar.gz" -exec ls -lh {} \;
+
+    - name: Upload downloaded artifact (optional)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: re-uploaded-images
+        path: ${{ github.event.inputs.download_path }}/*.tar.gz
+        retention-days: 3
