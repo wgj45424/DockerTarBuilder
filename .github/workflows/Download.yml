@@ -1,63 +1,79 @@
-name: Download and Commit with Git LFS
+name: Upload to Release
 on:
   workflow_dispatch:
     inputs:
-      artifact_name:
-        description: '要下载的 Artifact 名称'
+      docker_images:
+        description: '请填写docker镜像名称，多个用英文逗号分开'
         required: true
-        default: 'my-artifact'
-      run_id:
-        description: '要下载的 Workflow Run ID'
+        default: 'alpine:latest,busybox:stable-glibc'
+      release_tag:
+        description: 'Release 标签（例如：v1.0.0）'
         required: true
-      target_dir:
-        description: '镜像文件在仓库中的存放目录'
+        default: 'v1.0.0'
+      release_name:
+        description: 'Release 名称（可选，留空则使用标签名）'
         required: false
-        default: 'docker-images'
+        default: ''
 
 jobs:
-  download_and_commit:
+  pull_and_upload_release:
     runs-on: ubuntu-22.04
     
     permissions:
-      contents: write
+      contents: write  # 创建 Release 和上传附件需要写入权限
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
 
-    - name: Install and configure Git LFS
+    - name: Clean up Docker to free space
       run: |
-        sudo apt-get update
-        sudo apt-get install -y git-lfs
-        git lfs install
-        
-        # 追踪所有 .tar.gz 文件
-        git lfs track "*.tar.gz"
-        git add .gitattributes
-        git commit -m "Configure Git LFS for .tar.gz files" || echo "No changes"
+        docker system prune -a -f
+        docker volume prune -f
+        echo "=== Available disk space ==="
+        df -h /
 
-    - name: Download artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ github.event.inputs.artifact_name }}
-        path: ${{ github.event.inputs.target_dir }}
-        run-id: ${{ github.event.inputs.run_id }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Commit and push with Git LFS
+    - name: Pull Docker Images and Package
       run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
+        images="${{ github.event.inputs.docker_images }}"
+        IFS=',' read -r -a image_array <<< "$images"
+        for image in "${image_array[@]}"; do
+          # 去除可能的前后空格
+          image=$(echo "$image" | xargs)
+          echo "Processing: $image"
+          
+          docker pull "${image}" --platform "linux/amd64"
+          
+          # 生成安全的文件名（将 / 和 : 替换为 _）
+          image_name="${image//\//_}"
+          image_name="${image_name//:/_}"
+          
+          echo "Saving $image to ${image_name}-amd64.tar.gz"
+          docker save "${image}" | gzip > "${image_name}-amd64.tar.gz"
+          
+          docker rmi "${image}" -f
+        done
         
-        git add ${{ github.event.inputs.target_dir }}/*.tar.gz
-        
-        if git diff --staged --quiet; then
-          echo "No changes to commit"
-        else
-          TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-          git commit -m "Add Docker images from run ${{ github.event.inputs.run_id }} [skip ci]"
-          git push
-          echo "Successfully committed and pushed files"
-        fi
+        echo "=== Generated files ==="
+        ls -lh *.tar.gz
+
+    - name: Create Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.event.inputs.release_tag }}
+        name: ${{ github.event.inputs.release_name || github.event.inputs.release_tag }}
+        draft: false
+        prerelease: false
+        generate_release_notes: false
+        files: |
+          ${{ github.workspace }}/*.tar.gz
+        fail_on_unmatched_files: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Verify Release Upload
+      run: |
+        echo "=== Uploaded files to Release ==="
+        echo "Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.release_tag }}"
+        echo "Files uploaded successfully!"
