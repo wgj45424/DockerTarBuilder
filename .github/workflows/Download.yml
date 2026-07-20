@@ -1,55 +1,61 @@
-name: down
+name: Download and Commit Docker Images
 on:
   workflow_dispatch:
     inputs:
       artifact_name:
-        description: 'Artifact 名称（用于标识上传的压缩包）'
-        required: false
-        default: 'my-artifact'
-      docker_images:
-        description: '请填写docker镜像名称，多个用英文逗号分开'
+        description: '要下载的 Artifact 名称'
         required: true
-        default: 'alpine:latest,busybox:stable-glibc'
+        default: 'my-artifact'
+      run_id:
+        description: '要下载的 Workflow Run ID'
+        required: true
+      target_dir:
+        description: '镜像文件在仓库中的存放目录'
+        required: false
+        default: 'docker-images'
 
 jobs:
-  pull_and_package:
+  download_and_commit:
     runs-on: ubuntu-22.04
+    
+    permissions:
+      contents: write  # 需要写入权限才能 push
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整历史，方便 commit
 
-    - name: Clean up Docker to free space
-      run: |
-        docker system prune -a -f
-        docker volume prune -f
-
-    - name: Pull Docker Images and Package
-      run: |
-        images="${{ github.event.inputs.docker_images }}"
-        IFS=',' read -r -a image_array <<< "$images"
-        for image in "${image_array[@]}"; do
-          # 去除可能的前后空格
-          image=$(echo "$image" | xargs)
-          echo "Processing: $image"
-          
-          docker pull "${image}" --platform "linux/amd64"
-          
-          # 生成安全的文件名（将 / 和 : 替换为 _）
-          image_name="${image//\//_}"
-          image_name="${image_name//:/_}"
-          
-          docker save "${image}" -o "${image_name}-amd64.tar"
-          gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
-          rm "${image_name}-amd64.tar"
-        done
-        
-        echo "=== Generated files ==="
-        ls -lh *.tar.gz
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Download artifact
+      uses: actions/download-artifact@v4
       with:
         name: ${{ github.event.inputs.artifact_name }}
-        path: ${{ github.workspace }}/*.tar.gz
-        retention-days: 1
+        path: ${{ github.event.inputs.target_dir }}
+        run-id: ${{ github.event.inputs.run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: List downloaded files
+      run: |
+        echo "=== Downloaded files ==="
+        ls -lh ${{ github.event.inputs.target_dir }}/ || echo "No files found"
+
+    - name: Commit and push to repository
+      run: |
+        # 配置 git 用户信息
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # 添加文件到暂存区
+        git add ${{ github.event.inputs.target_dir }}/*.tar.gz
+        
+        # 检查是否有变更需要提交
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          # 获取当前时间作为提交信息
+          TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+          git commit -m "Add Docker images from run ${{ github.event.inputs.run_id }} [skip ci]"
+          git push
+          echo "Successfully committed and pushed files"
+        fi
