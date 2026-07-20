@@ -1,52 +1,55 @@
-name: Download Docker Images Artifact
+name: x86-64 Pull and Save Docker Image
 on:
   workflow_dispatch:
     inputs:
-      run_id:
-        description: '要下载的 Workflow Run ID（留空则下载当前运行）'
+      artifact_name:
+        description: 'Artifact 名称（用于标识上传的压缩包）'
         required: false
-        default: ''
-      download_path:
-        description: '下载存放路径'
-        required: false
-        default: './downloaded-images'
+        default: 'my-artifact'
+      docker_images:
+        description: '请填写docker镜像名称，多个用英文逗号分开'
+        required: true
+        default: 'alpine:latest,busybox:stable-glibc'
 
 jobs:
-  download_artifact:
+  pull_and_package:
     runs-on: ubuntu-22.04
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 调试步骤：列出所有 Artifact 确认名称
-    - name: List all artifacts for debugging
+    - name: Clean up Docker to free space
       run: |
-        echo "Listing artifacts for run ID: ${{ github.event.inputs.run_id || github.run_id }}"
-        gh api repos/${{ github.repository }}/actions/runs/${{ github.event.inputs.run_id || github.run_id }}/artifacts --jq '.artifacts[] | {name: .name, expired: .expired, size: .size_in_bytes}'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        docker system prune -a -f
+        docker volume prune -f
 
-    - name: Download artifact by run_id
-      if: github.event.inputs.run_id != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: my-artifact                    # 👈 关键修改：改为你上传时使用的名称
-        path: ${{ github.event.inputs.download_path }}
-        run-id: ${{ github.event.inputs.run_id }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Download latest artifact (current run)
-      if: github.event.inputs.run_id == ''
-      uses: actions/download-artifact@v4
-      with:
-        name: my-artifact                    # 👈 关键修改：改为你上传时使用的名称
-        path: ${{ github.event.inputs.download_path }}
-
-    - name: List downloaded files
+    - name: Pull Docker Images and Package
       run: |
-        echo "=== Downloaded files ==="
-        ls -lh ${{ github.event.inputs.download_path }}/ || echo "No files found"
-        echo ""
-        echo "=== File details ==="
-        find ${{ github.event.inputs.download_path }} -type f -name "*.tar.gz" -exec ls -lh {} \;
+        images="${{ github.event.inputs.docker_images }}"
+        IFS=',' read -r -a image_array <<< "$images"
+        for image in "${image_array[@]}"; do
+          # 去除可能的前后空格
+          image=$(echo "$image" | xargs)
+          echo "Processing: $image"
+          
+          docker pull "${image}" --platform "linux/amd64"
+          
+          # 生成安全的文件名（将 / 和 : 替换为 _）
+          image_name="${image//\//_}"
+          image_name="${image_name//:/_}"
+          
+          docker save "${image}" -o "${image_name}-amd64.tar"
+          gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
+          rm "${image_name}-amd64.tar"
+        done
+        
+        echo "=== Generated files ==="
+        ls -lh *.tar.gz
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.event.inputs.artifact_name }}
+        path: ${{ github.workspace }}/*.tar.gz
+        retention-days: 1
