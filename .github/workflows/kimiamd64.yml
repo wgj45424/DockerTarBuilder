@@ -1,4 +1,4 @@
-name: Get-AMD64-Docker-Images-Release
+name: Get-AMD64-kimi
 
 on:
   workflow_dispatch:
