@@ -1,0 +1,96 @@
+name: Get-AMD64-zip-2g
+
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '请填写docker镜像名称,多个用英文逗号分开'
+        required: true
+        default: 'alpine:latest,alpine/curl,busybox:stable-glibc'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 创建 Release 需要写入权限
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Pull Docker Images and Package
+        run: |
+          images="${{ github.event.inputs.docker_images }}"
+          IFS=',' read -r -a image_array <<< "$images"
+          for image in "${image_array[@]}"; do
+            # 去除可能的空格
+            image=$(echo "$image" | xargs)
+            echo "Processing: $image"
+            
+            docker pull "${image}" --platform "linux/amd64"
+            
+            image_name="${image//\//_}"
+            image_name="${image_name//:/_}"
+            
+            # 先保存为 .tar（不压缩），便于后续检查大小和分片
+            docker save "${image}" -o "${image_name}-amd64.tar"
+            
+            # 检查文件大小并决定是否分片
+            file_size=$(stat -c%s "${image_name}-amd64.tar")
+            max_size=2147483648  # 2 GiB - 1 byte
+            
+            if (( file_size > max_size )); then
+              echo "⚠️ 文件 ${image_name}-amd64.tar 大小为 $(du -h ${image_name}-amd64.tar | cut -f1)，超过2GB，开始分片..."
+              
+              # 分片大小设置为 1900MB（留出余量）
+              CHUNK_SIZE=1900M
+              
+              # 分割文件，生成 .part-000, .part-001, ...
+              split -b ${CHUNK_SIZE} -a 3 -d "${image_name}-amd64.tar" "${image_name}-amd64.tar.part-"
+              
+              # 删除原始大文件
+              rm "${image_name}-amd64.tar"
+              
+              # 记录分片信息，供后续 Release body 使用
+              echo "SPLIT_${image_name}=true" >> $GITHUB_ENV
+              echo "✅ 分片完成，共生成 $(ls ${image_name}-amd64.tar.part-* | wc -l) 个分片文件"
+            else
+              echo "✅ 文件 ${image_name}-amd64.tar 大小为 $(du -h ${image_name}-amd64.tar | cut -f1)，小于2GB，直接压缩..."
+              
+              # 小于2GB，正常压缩
+              gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
+              rm "${image_name}-amd64.tar"
+              
+              echo "SPLIT_${image_name}=false" >> $GITHUB_ENV
+            fi
+          done
+
+      - name: List generated files
+        run: |
+          echo "=========================================="
+          echo "📦 生成的文件列表："
+          echo "=========================================="
+          find $GITHUB_WORKSPACE -maxdepth 1 -type f \( -name "*.tar.gz" -o -name "*.part-*" \) -exec ls -lh {} \;
+          echo "=========================================="
+          
+          # 统计总大小
+          total_size=$(du -sh $GITHUB_WORKSPACE/*.tar.gz $GITHUB_WORKSPACE/*.part-* 2>/dev/null | awk '{sum+=$1} END {print sum}' || echo "0")
+          echo "📊 总大小: $(du -sh $GITHUB_WORKSPACE/*.tar.gz $GITHUB_WORKSPACE/*.part-* 2>/dev/null | tail -1 | cut -f1 || echo 'N/A')"
+          
+          release_name=$(TZ="Asia/Shanghai" date +'%Y-%m-%d %H:%M Build')
+          echo "RELEASE_NAME=$release_name" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.1.0
+        with:
+          tag_name: DockerTarBuilder-AMD64
+          name: ${{ env.RELEASE_NAME }} for x86-64
+          body: |
+            [![Github](https://img.shields.io/badge/RELEASE:DockerTarBuilder-123456?logo=github&logoColor=fff&labelColor=green&style=for-the-badge)](https://www.bilibili.com/video/BV1EZ421M7mL) [![Github](https://img.shields.io/badge/国内加速站下载-FC7C0D?logo=github&logoColor=fff&labelColor=000&style=for-the-badge)](https://wkdaily.cpolar.top/archives/1)
+            
+            ### 📦 包含的镜像
+            ${{ github.event.inputs.docker_images }}
+            
+            ### 🔧 使用方法
+            **对于普通镜像（.tar.gz 文件）：**
+            ```bash
+            docker load -i 镜像名-amd64.tar.gz
