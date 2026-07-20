@@ -1,0 +1,72 @@
+name: bigx86-64 Pull and Save Docker Image
+on:
+  workflow_dispatch:
+    inputs:
+      docker_images:
+        description: '请填写docker镜像名称，多个用英文逗号分开'
+        required: true
+        default: 'alpine:latest,busybox:stable-glibc'
+
+jobs:
+  pull_and_package:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Maximum cleanup to free space
+      run: |
+        # 清理 Docker
+        docker system prune -a -f --volumes
+        docker builder prune -a -f
+        
+        # 清理系统
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /usr/local/share/boost
+        
+        # 清理包管理器缓存
+        sudo apt-get clean
+        sudo apt-get autoremove -y
+        
+        # 检查空间
+        echo "=== Available disk space ==="
+        df -h /
+
+    - name: Pull and Package Images
+      run: |
+        images="${{ github.event.inputs.docker_images }}"
+        IFS=',' read -r -a image_array <<< "$images"
+        
+        for image in "${image_array[@]}"; do
+          image=$(echo "$image" | xargs)  # Trim whitespace
+          echo "Processing: $image"
+          
+          # Pull image
+          docker pull "${image}" --platform "linux/amd64"
+          
+          # Save and compress
+          image_name="${image//\//_}"
+          image_name="${image_name//:/_}"
+          
+          echo "Saving $image to ${image_name}-amd64.tar.gz"
+          docker save "${image}" | gzip > "${image_name}-amd64.tar.gz"
+          
+          # Remove image to free space
+          docker rmi "${image}" -f
+          
+          # Show remaining space
+          df -h /
+        done
+        
+        echo "=== Generated files ==="
+        ls -lh *.tar.gz
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-images
+        path: ${{ github.workspace }}/*.tar.gz
+        retention-days: 3
